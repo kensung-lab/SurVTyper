@@ -198,9 +198,6 @@ void genotype_dels(int id, std::string contig_name, std::vector<bcf1_t*> vcf_del
 				if (sv->called_gt == "HOM_ALT" && del_len > sv->max_conf_size) filter += "SIZE_FILTER;";
 				else if (sv->called_gt == "HET" && del_len > sv->max_conf_size*2) filter += "SIZE_FILTER;";
 			}
-//			else { // positive-to-negative ratio
-//				if (sv->disc_pairs < 3) filter += "NOT_ENOUGH_DISC_PAIRS;";
-//			}
 			if (sv->alt_better_strong < 3) filter += "LOW_ALT_STRONG_READS;";
 			if (sv->remapped_end-sv->remapped_start < config.min_sv_size) filter += "TOO_SHORT_AFTER_REMAPPING;";
 			if (!sv->split_aln_accepted) filter += "WEAK_SUPPORT_BY_ALT_CONTIG;";
