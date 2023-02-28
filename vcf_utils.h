@@ -63,13 +63,15 @@ bcf_hdr_t* generate_out_hdr(std::string& sample_name, bcf_hdr_t* vcf_header) {
 	const char* re_tag = "##FORMAT=<ID=RE,Number=1,Type=Integer,Description=\"End of deletion after remapping.\">";
 	bcf_hdr_add_hrec(new_header, bcf_hdr_parse_line(new_header, re_tag, &len));
 
-	const char* rsc_tag = "##FORMAT=<ID=RSC,Number=1,Type=String,Description=\"\">";
+	const char* rsc_tag = "##FORMAT=<ID=RSC,Number=1,Type=String,Description=\"Alignment of the left half of the assembled alternative "
+			"allele to the reference (CIGAR)\">";
 	bcf_hdr_add_hrec(new_header, bcf_hdr_parse_line(new_header, rsc_tag, &len));
 
-	const char* rec_tag = "##FORMAT=<ID=REC,Number=1,Type=String,Description=\"\">";
+	const char* rec_tag = "##FORMAT=<ID=REC,Number=1,Type=String,Description=\"Alignment of the right half of the assembled alternative "
+			"allele to the reference (CIGAR)\">";
 	bcf_hdr_add_hrec(new_header, bcf_hdr_parse_line(new_header, rec_tag, &len));
 
-	const char* rfc_tag = "##FORMAT=<ID=RFC,Number=1,Type=String,Description=\"\">";
+	const char* rfc_tag = "##FORMAT=<ID=RFC,Number=1,Type=String,Description=\"Alignment of the full alternative allele to the reference (CIGAR)\">";
 	bcf_hdr_add_hrec(new_header, bcf_hdr_parse_line(new_header, rfc_tag, &len));
 
 	const char* cn_tag = "##FORMAT=<ID=CN,Number=1,Type=Integer,Description=\"Copy number.\">";
@@ -150,6 +152,9 @@ bcf_hdr_t* generate_out_hdr(std::string& sample_name, bcf_hdr_t* vcf_header) {
 
 	const char* rev_anchor_tag = "##FORMAT=<ID=RAN,Number=1,Type=String,Description=\"Reverse anchor.\">";
 	bcf_hdr_add_hrec(new_header, bcf_hdr_parse_line(new_header, rev_anchor_tag, &len));
+
+	const char* genotyped_by_tag = "##genotypedBy=SurVTyper 0.1;";
+	bcf_hdr_add_hrec(new_header, bcf_hdr_parse_line(new_header, genotyped_by_tag, &len));
 
 	return new_header;
 }
