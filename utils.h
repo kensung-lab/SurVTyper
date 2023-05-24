@@ -15,6 +15,7 @@
 KSEQ_INIT(int, read)
 
 struct config_t {
+	std::string bam_fname, reference_fname, workdir, sample_name;
     int threads, read_len;
     int max_is;
     double max_seq_error = 0.04;
@@ -26,6 +27,7 @@ struct config_t {
     int min_clip_size = 15;
     int min_mh_len = 100;
     int max_size_diff = 200;
+    bool save_evidence = false;
 
     void parse(std::string config_file) {
         std::unordered_map<std::string, std::string> config_params;
@@ -36,10 +38,15 @@ struct config_t {
         }
         fin.close();
 
+        bam_fname = config_params["bam_file"];
+        workdir = config_params["workdir"];
+        reference_fname = config_params["reference"];
+        sample_name = config_params["sample_name"];
         threads = stoi(config_params["threads"]);
         read_len = stoi(config_params["read_len"]);
         max_is = stoi(config_params["max_is"]);
         max_size_diff = stoi(config_params["max_size_diff"]);
+        save_evidence = stoi(config_params["save_evidence"]);
     };
 };
 

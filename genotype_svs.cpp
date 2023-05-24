@@ -146,159 +146,6 @@ std::string build_consensus_contig(std::string contig, std::vector<std::string>&
 }
 
 
-void genotype_dels(int id, std::string contig_name, std::vector<bcf1_t*> vcf_dels, stats_t stats) {
-
-    mtx.lock();
-    std::cout << "Genotyping deletions in " << contig_name << std::endl;
-    mtx.unlock();
-
-    StripedSmithWaterman::Aligner aligner(1, 4, 6, 1, true);
-    StripedSmithWaterman::Aligner harsh_aligner(1, 4, 100, 1, true);
-    open_samFile_t* bam_file = open_samFile(bam_fname);
-    hts_set_fai_filename(bam_file->file, reference_fname.c_str());
-
-    std::vector<deletion_t*> dels, shorter_dels, longer_dels;
-    for (bcf1_t* sv : vcf_dels) {
-		deletion_t* del = vcf_record_to_deletion(sv, vcf_header);
-		std::string log_string;
-		genotype_del(contig_name, del, bam_file, aligner, harsh_aligner, stats, chr_seqs, log_string);
-		mtx.lock();
-		flog << log_string << std::endl << std::endl;
-		mtx.unlock();
-		dels.push_back(del);
-		if (del->is_short(config)) shorter_dels.push_back(del);
-		else longer_dels.push_back(del);
-    }
-
-    calculate_confidence_interval_size(contig_name, shorter_dels, bam_file, config, stats, del_is_population);
-	depth_filter_del(contig_name, chr_seqs.get_len(contig_name), dels, bam_file);
-
-	int min_disc_pairs = std::max(3, int(stats.median_depth+5)/10);
-
-    mtx.lock();
-    for (deletion_t* sv : dels) {
-        std::string filter;
-
-        int del_len = sv->remapped_end-sv->remapped_start - sv->ins_seq.length();
-
-        // ANOMALOUS COVERAGE - do not trust no matter what
-        if (sv->left_flanking_cov > stats.max_depth || sv->right_flanking_cov > stats.max_depth ||
-			sv->left_flanking_cov < stats.min_depth || sv->right_flanking_cov < stats.min_depth) {
-        	filter += "ANOMALOUS_FLANKING_DEPTH;";
-        	sv->anomalous_cov = true;
-        }
-		if (sv->indel_left_cov > stats.max_depth || sv->indel_right_cov > stats.max_depth) {
-			filter += "ANOMALOUS_DEL_DEPTH;";
-			sv->anomalous_cov = true;
-		}
-
-		// If positive SR-based GT, try SR-based filters
-		if (gt_is_positive(sv->called_gt)) {
-			if (sv->is_short(config)) { // size filter
-				if (sv->called_gt == "HOM_ALT" && del_len > sv->max_conf_size) filter += "SIZE_FILTER;";
-				else if (sv->called_gt == "HET" && del_len > sv->max_conf_size*2) filter += "SIZE_FILTER;";
-			}
-			if (sv->alt_better_strong < 3) filter += "LOW_ALT_STRONG_READS;";
-			if (sv->remapped_end-sv->remapped_start < config.min_sv_size) filter += "TOO_SHORT_AFTER_REMAPPING;";
-			if (!sv->split_aln_accepted) filter += "WEAK_SUPPORT_BY_ALT_CONTIG;";
-			int size_diff = abs((sv->end-sv->start) - (sv->remapped_end-sv->remapped_start));
-			if (size_diff >= config.max_size_diff) filter += "REMAPPED_SIZE_DIFF;";
-			if (sv->was_remapped && (sv->vouching_for_lh_consensus_remapping < 3 || sv->vouching_for_rh_consensus_remapping < 3))
-				filter += "NO_READS_SUPPORTING_REMAPPING;";
-		}
-        if (sv->alt_better > 2*stats.max_depth) filter += "TOO_MANY_ALT_READS;";
-        sv->filter = filter;
-    }
-
-	calculate_ptn_ratio(contig_name, dels, bam_file, config, stats);
-
-	for (deletion_t* sv : dels) {
-		std::string filter = sv->filter;
-        if (gt_is_positive(sv->called_gt) && sv->disc_pairs < 3 && !sv->is_short(config)) {
-        	filter += "NOT_ENOUGH_DISC_PAIRS;";
-        }
-
-        // RESCUE DELETIONS THAT DO NOT HAVE SPLIT READS BUT ARE HIGHLY SUPPORTED BY DISCORDANT PAIRS
-        bool dp_only = false;
-        if (!sv->anomalous_cov && (!gt_is_positive(sv->called_gt) || !filter.empty()) && sv->disc_pairs >= min_disc_pairs) {
-        	if (sv->mleft_flanking_cov*0.25 >= sv->mindel_left_cov && sv->mright_flanking_cov*0.25 >= sv->mindel_right_cov) {
-        		sv->called_gt = "HOM_ALT";
-        		filter = "";
-        	} else {
-        		sv->called_gt = "HET";
-        		filter = "";
-        	}
-        	dp_only = true;
-        	if (gt_is_positive(sv->called_gt) && sv->disc_pairs+sv->conc_pairs < stats.min_pairs_crossing) filter += "NOT_ENOUGH_PAIRS;";
-        }
-
-        if (!gt_is_positive(sv->called_gt) && !sv->alt_better && !sv->ref_better) filter += "NO_USEFUL_READS;";
-
-        // force depth filter for dp_only variants
-        if (gt_is_positive(sv->called_gt) && (sv->end-sv->start >= config.min_size_for_depth_filtering || dp_only)) {
-        	if (sv->mleft_flanking_cov*0.75<sv->mindel_left_cov || sv->mright_flanking_cov*0.75<sv->mindel_right_cov) {
-				filter += "DEPTH_FILTER;";
-        	}
-		}
-
-        if (filter.empty()) filter = "PASS";
-
-        bcf_subset(out_vcf_header, sv->bcf_entry, 0, {});
-        int gt_data[2];
-        strgt2datagt(sv->called_gt, gt_data);
-        bcf_update_genotypes(out_vcf_header, sv->bcf_entry, gt_data, 2);
-
-        const char* ft_val[1];
-        ft_val[0] = filter.c_str();
-
-        const char* ed_val[1];
-        ed_val[0] = dp_only ? "DP_ONLY" : "SR";
-
-        int remapped_start_1based = sv->remapped_start+1, remapped_end_1based = sv->remapped_end+1;
-        bcf_update_format_string(out_vcf_header, sv->bcf_entry, "FT", ft_val, 1);
-        bcf_update_format_string(out_vcf_header, sv->bcf_entry, "ED", ed_val, 1);
-        bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "AR", &(sv->alt_better), 1);
-        bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "ARF", &(sv->alt_better_fwd), 1);
-        bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "ARR", &(sv->alt_better_rev), 1);
-        bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "RR", &(sv->ref_better), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "SR", &(sv->alt_better_strong), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "ARMQ", &(sv->alt_better_max_mq), 1);
-		if (sv->was_remapped) {
-			bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "RS", &remapped_start_1based, 1);
-			bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "RE", &remapped_end_1based, 1);
-			const char* rsc_val[1];
-			rsc_val[0] = sv->rs_cigar.c_str();
-			bcf_update_format_string(out_vcf_header, sv->bcf_entry, "RSC", rsc_val, 1);
-			const char* rec_val[1];
-			rec_val[0] = sv->re_cigar.c_str();
-			bcf_update_format_string(out_vcf_header, sv->bcf_entry, "REC", rec_val, 1);
-			const char* rfc_val[1];
-			rfc_val[0] = sv->full_cigar.c_str();
-			bcf_update_format_string(out_vcf_header, sv->bcf_entry, "RFC", rfc_val, 1);
-			bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "VL", &(sv->vouching_for_lh_consensus_remapping), 1);
-			bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "VR", &(sv->vouching_for_rh_consensus_remapping), 1);
-		}
-
-        bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "DFL", &(sv->left_flanking_cov), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "DDL", &(sv->indel_left_cov), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "DDR", &(sv->indel_right_cov), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "DFR", &(sv->right_flanking_cov), 1);
-
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "MDFL", &(sv->mleft_flanking_cov), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "MDDL", &(sv->mindel_left_cov), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "MDDR", &(sv->mindel_right_cov), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "MDFR", &(sv->mright_flanking_cov), 1);
-
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "MCS", &(sv->max_conf_size), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "DP", &(sv->disc_pairs), 1);
-		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "CP", &(sv->conc_pairs), 1);
-    }
-    mtx.unlock();
-
-    close_samFile(bam_file);
-}
-
-
 void genotype_small_dup(std::string& contig_name, duplication_t* sv, open_samFile_t* bam_file,
                   StripedSmithWaterman::Aligner& aligner, StripedSmithWaterman::Aligner& harsh_aligner, stats_t stats) {
 
@@ -1581,7 +1428,7 @@ void genotype_inss(int id, std::string contig_name, std::vector<bcf1_t*> vcf_ins
 	}
 
 	depth_filter_ins(contig_name, chr_seqs.get_len(contig_name), insertions, bam_file, config.max_is);
-	calculate_confidence_interval_size(contig_name, shorter_inss, bam_file, config, stats, del_is_population);
+	calculate_confidence_interval_size(contig_name, shorter_inss, bam_file, config, stats);
 
 	close_samFile(bam_file);
 
@@ -1823,15 +1670,14 @@ void extract_dc_reads(int id, std::string contig_name, std::string workdir) {
 int main(int argc, char* argv[]) {
 
     std::string sv_fname = argv[1];
-    bam_fname = argv[2];
-    std::string workdir = argv[3];
-    reference_fname = argv[4];
-    std::string sample_name = argv[5];
+    std::string workdir = argv[2];
 
     flog.open(workdir + "/log");
     consensus_flog.open(workdir + "/consensus_log");
 
     config.parse(workdir + "/config.txt");
+    bam_fname = config.bam_fname;
+    reference_fname = config.reference_fname;
 
     std::string contig_name;
     std::ifstream rnd_pos_fin(workdir + "/random_pos.txt");
@@ -1842,8 +1688,8 @@ int main(int argc, char* argv[]) {
     }
 
     open_samFile_t* bam_file = open_samFile(bam_fname);
-	if (hts_set_fai_filename(bam_file->file, fai_path(reference_fname.c_str())) != 0) {
-		throw "Failed to read reference " + reference_fname;
+	if (hts_set_fai_filename(bam_file->file, fai_path(config.reference_fname.c_str())) != 0) {
+		throw "Failed to read reference " + config.reference_fname;
 	}
 
     std::cout << "Estimating BAM statistics." << std::endl;
@@ -1997,7 +1843,7 @@ int main(int argc, char* argv[]) {
 
     std::string out_vcf_fname = workdir + "/genotyped.vcf.gz";
     htsFile* out_vcf_file = bcf_open(out_vcf_fname.c_str(), "wz");
-    out_vcf_header = generate_out_hdr(sample_name, vcf_header);
+    out_vcf_header = generate_out_hdr(config.sample_name, vcf_header);
     if (bcf_hdr_write(out_vcf_file, out_vcf_header) != 0) {
     	throw std::runtime_error("Failed to read the VCF header.");
     }
@@ -2020,7 +1866,8 @@ int main(int argc, char* argv[]) {
     ctpl::thread_pool thread_pool3(config.threads);
     for (auto& p : dels_by_chr_nums) {
     	std::string contig_name = p.second;
-        std::future<void> future = thread_pool3.push(genotype_dels, contig_name, dels_by_chr[contig_name], stats);
+        std::future<void> future = thread_pool3.push(genotype_dels, contig_name, chr_seqs.get_seq(contig_name),
+        		chr_seqs.get_len(contig_name), dels_by_chr[contig_name], vcf_header, out_vcf_header, stats, config);
         futures.push_back(std::move(future));
     }
     for (auto& p : dups_by_chr_nums) {

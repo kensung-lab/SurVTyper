@@ -560,7 +560,7 @@ void calculate_ptn_ratio(std::string contig_name, std::vector<deletion_t*>& dele
 }
 
 void calculate_confidence_interval_size(std::string contig_name, std::vector<indel_t*>& indels, open_samFile_t* bam_file,
-                                        config_t config, stats_t stats, std::vector<double>& population, bool do_ks_test = false) {
+                                        config_t config, stats_t stats) {
 
 	std::sort(indels.begin(), indels.end(), [](const indel_t* d1, const indel_t* d2) {
         return (d1->start+d1->end)/2 < (d2->start+d2->end)/2;
@@ -635,14 +635,14 @@ void calculate_confidence_interval_size(std::string contig_name, std::vector<ind
 }
 
 void calculate_confidence_interval_size(std::string contig_name, std::vector<deletion_t*>& indels, open_samFile_t* bam_file,
-                                        config_t config, stats_t stats, std::vector<double>& population, bool do_ks_test = false) {
+                                        config_t config, stats_t stats) {
 	std::vector<indel_t*> deletions(indels.begin(), indels.end());
-	calculate_confidence_interval_size(contig_name, deletions, bam_file, config, stats, population, do_ks_test);
+	calculate_confidence_interval_size(contig_name, deletions, bam_file, config, stats);
 }
 void calculate_confidence_interval_size(std::string contig_name, std::vector<insertion_t*>& indels, open_samFile_t* bam_file,
-                                        config_t config, stats_t stats, std::vector<double>& population, bool do_ks_test = false) {
+                                        config_t config, stats_t stats) {
 	std::vector<indel_t*> insertions(indels.begin(), indels.end());
-	calculate_confidence_interval_size(contig_name, insertions, bam_file, config, stats, population, do_ks_test);
+	calculate_confidence_interval_size(contig_name, insertions, bam_file, config, stats);
 }
 
 #endif //SURVINDEL2_STAT_TESTS_H

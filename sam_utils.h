@@ -97,6 +97,16 @@ std::string get_sequence(bam1_t* r) {
     return std::string(seq);
 }
 
+std::string get_quals(bam1_t* r) {
+	char qual[100000];
+	const uint8_t* bam_qual = bam_get_qual(r);
+	for (int i = 0; i < r->core.l_qseq; i++) {
+		qual[i] = bam_qual[i]+33;
+	}
+	qual[r->core.l_qseq] = '\0';
+	return std::string(qual);
+}
+
 std::string get_cigar_code(bam1_t* r) {
     const uint32_t* cigar = bam_get_cigar(r);
     std::stringstream ss;
@@ -273,6 +283,14 @@ bool is_homopolymer(const char* seq, int len) {
 
 bool is_homopolymer(std::string& seq) {
 	return is_homopolymer(seq.data(), seq.length());
+}
+
+samFile* get_writer(std::string path, bam_hdr_t* header, bool bam = true) {
+    samFile* writer = sam_open(path.c_str(), bam ? "wb" : "w");
+    if (sam_hdr_write(writer, header) != 0) {
+        throw "Could not write file " + path;
+    }
+    return writer;
 }
 
 #endif //SURVTYPER_SAM_UTILS_H
