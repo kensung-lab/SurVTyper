@@ -387,6 +387,9 @@ int* smith_waterman_gotoh(const char* ref, int ref_len, const char* read, int re
 bool accept_aln(StripedSmithWaterman::Alignment& aln, int min_clip_size) {
     return get_left_clip_size(aln) < min_clip_size && get_right_clip_size(aln) < min_clip_size;
 }
+bool accept_aln_strict(StripedSmithWaterman::Alignment& aln) {
+	return get_left_clip_size(aln) == 0 && get_right_clip_size(aln) == 0;
+}
 
 int count_indels(StripedSmithWaterman::Alignment& aln) {
 	int indels = 0;

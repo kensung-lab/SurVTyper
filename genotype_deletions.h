@@ -38,7 +38,7 @@ bool overlap_read_consensus_rh(bam1_t* read, int rh_remap_start, std::string& al
 	return spa.overlap;
 }
 
-void genotype_del(deletion_t* sv, std::string& contig_name, char* contig_seq, int contig_len, open_samFile_t* bam_file,
+void genotype_del(std::string& contig_name, deletion_t* sv, char* contig_seq, int contig_len, open_samFile_t* bam_file,
 		StripedSmithWaterman::Aligner& aligner, StripedSmithWaterman::Aligner& harsh_aligner, stats_t stats, config_t config,
 		std::string& log_string) {
 
@@ -459,7 +459,7 @@ void genotype_dels(int id, std::string contig_name, char* contig_seq, int contig
     for (bcf1_t* sv : vcf_dels) {
 		deletion_t* del = vcf_record_to_deletion(sv, in_vcf_header);
 		std::string log_string;
-		genotype_del(del, contig_name, contig_seq, contig_len, bam_file, aligner, harsh_aligner, stats, config, log_string);
+		genotype_del(contig_name, del, contig_seq, contig_len, bam_file, aligner, harsh_aligner, stats, config, log_string);
 //		mtx.lock();
 //		flog << log_string << std::endl << std::endl;
 //		mtx.unlock();

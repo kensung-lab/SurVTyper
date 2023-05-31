@@ -60,7 +60,8 @@ void remap_consensus_to_reference(std::string& junction, char* ref, int ref_len,
 		std::string& remapped_cigar, int& remapped_ins_len, bool& low_qual_alt_allele) {
 	StripedSmithWaterman::Alignment aln;
 	StripedSmithWaterman::Filter filter;
-	std::string padded_junction = std::string(config.clip_penalty, 'N') + junction + std::string(config.clip_penalty, 'N');
+//	std::string padded_junction = std::string(config.clip_penalty, 'N') + junction + std::string(config.clip_penalty, 'N');
+	std::string padded_junction = junction;
 	aligner.Align(padded_junction.c_str(), ref, ref_len, filter, &aln, 0);
 
 	remapped_ins_len = 0;
@@ -69,6 +70,7 @@ void remap_consensus_to_reference(std::string& junction, char* ref, int ref_len,
 
 	if (aln.query_begin > 0 && aln.query_end < padded_junction.length()-1) {
 		low_qual_alt_allele = true;
+		remapped_cigar = aln.cigar_string;
 	} else if (aln.query_begin == 0 && aln.query_end == padded_junction.length()-1) {
 		remapped_ins_len = padded_junction.length()-(aln.ref_end-aln.ref_begin+1);
 		remapped_cigar = aln.cigar_string;
@@ -80,7 +82,11 @@ void remap_consensus_to_reference(std::string& junction, char* ref, int ref_len,
 			if (get_right_clip_size(rh_aln) > 0) low_qual_alt_allele = true; // bad anchor
 			else if (rh_aln.query_end-rh_aln.query_begin < config.min_clip_size+config.clip_penalty) low_qual_alt_allele = true; // anchor is too small
 			remapped_ins_len = std::max(0, get_left_clip_size(rh_aln) - rh_aln.ref_begin);
-			remapped_cigar = aln.cigar_string + "," + rh_aln.cigar_string + "," + std::to_string(rh_aln.ref_begin);
+			std::stringstream ss;
+			for (uint32_t i : aln.cigar) ss << cigar_int_to_len(i) << cigar_int_to_op(i);
+			ss << rh_aln.query_begin << "I";
+			for (uint32_t i : rh_aln.cigar) ss << cigar_int_to_len(i) << cigar_int_to_op(i);
+			remapped_cigar = ss.str();
 		} else if (aln.query_end == padded_junction.length()-1) {
 			StripedSmithWaterman::Alignment lh_aln;
 			std::string left_half = padded_junction.substr(0, aln.query_begin);
@@ -88,7 +94,11 @@ void remap_consensus_to_reference(std::string& junction, char* ref, int ref_len,
 			if (get_left_clip_size(lh_aln) > 0) low_qual_alt_allele = true; // bad anchor
 			else if (lh_aln.query_end-lh_aln.query_begin < config.min_clip_size+config.clip_penalty) low_qual_alt_allele = true; // anchor is too small
 			remapped_ins_len = std::max(0, get_right_clip_size(lh_aln) - (aln.ref_begin-1-lh_aln.ref_end));
-			remapped_cigar = lh_aln.cigar_string + "," + aln.cigar_string + "," + std::to_string(aln.ref_begin-1-lh_aln.ref_end);
+			std::stringstream ss;
+			for (uint32_t i : lh_aln.cigar) ss << cigar_int_to_len(i) << cigar_int_to_op(i);
+			ss << left_half.length()-lh_aln.query_end << "I";
+			for (uint32_t i : aln.cigar) ss << cigar_int_to_len(i) << cigar_int_to_op(i);
+			remapped_cigar = ss.str();
 		}
 	}
 }
