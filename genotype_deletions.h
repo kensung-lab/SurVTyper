@@ -236,7 +236,7 @@ void genotype_del(std::string& contig_name, deletion_t* sv, char* contig_seq, in
 
 	// realign consensus ALT
     int split_i = 0;
-    if (gt_is_positive(sv->called_gt)) {
+    if (gt_is_positive(sv->called_gt) || config.save_evidence) {
 		StripedSmithWaterman::Alignment alt_cons_realn;
 		std::string padded_alt_consensus = std::string(config.clip_penalty, 'N') + alt_consensus + std::string(config.clip_penalty, 'N');
 		int ref_realn_start = del_start-padded_alt_consensus.length(), ref_realn_end = del_end+padded_alt_consensus.length();
