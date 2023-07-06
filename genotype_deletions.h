@@ -589,6 +589,13 @@ void genotype_dels(int id, std::string contig_name, char* contig_seq, int contig
 		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "MCS", &(sv->max_conf_size), 1);
 		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "DP", &(sv->disc_pairs), 1);
 		bcf_update_format_int32(out_vcf_header, sv->bcf_entry, "CP", &(sv->conc_pairs), 1);
+
+		if (config.save_evidence) {
+			std::string dp_pairs_fname = config.workdir + "/evidence/" + sv->id + ".dp";
+			std::ofstream dp_pairs_fout(dp_pairs_fname);
+			for (std::string qname : sv->disc_pairs_qnames) dp_pairs_fout << qname << std::endl;
+			dp_pairs_fout.close();
+		}
     }
 
     close_samFile(bam_file);

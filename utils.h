@@ -208,6 +208,7 @@ struct deletion_t : indel_t {
     int n_is_kstest = 0;
 
     int disc_pairs = 0, conc_pairs = 0;
+    std::vector<std::string> disc_pairs_qnames;
 
     deletion_t(std::string id, hts_pos_t start, hts_pos_t end, std::string ins_seq, std::string benchmark_gt) :
                indel_t(id, start, end), ins_seq(ins_seq) {};

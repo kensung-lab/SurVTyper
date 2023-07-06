@@ -501,7 +501,8 @@ void calculate_ptn_ratio(std::string contig_name, std::vector<deletion_t*>& dele
 	if (regions.empty()) return;
 
 	std::vector<int> tmp_disc_pairs_count(deletions.size());
-	std::vector<std::vector<int> > disc_pairs_to_del;
+	std::vector<std::vector<int> > disc_pairs_to_del_idx;
+	std::vector<std::vector<std::string> > disc_pairs_to_del_qnames;
 
 	int curr_pos = 0;
 	hts_itr_t* iter = sam_itr_regarray(bam_file->idx, bam_file->header, regions.data(), regions.size());
@@ -516,7 +517,8 @@ void calculate_ptn_ratio(std::string contig_name, std::vector<deletion_t*>& dele
 		hts_pos_t start = read->core.pos + read->core.l_qseq/2;
 		hts_pos_t end = read->core.pos + read->core.isize - read->core.l_qseq/2;
 
-		std::vector<int> _disc_pairs_to_del;
+		std::vector<int> _disc_pairs_to_del_idx;
+		std::vector<std::string> _disc_pairs_to_del_qnames;
 		for (int i = curr_pos; i < deletions.size() && midpoints[i] < read->core.pos+read->core.isize; i++) {
 			// normally a discordant pair should not be bigger than max_is + del size
 			// however, we are a bit permissive (max_is tolerance) because some imprecise deletions may be underestimated
@@ -524,15 +526,18 @@ void calculate_ptn_ratio(std::string contig_name, std::vector<deletion_t*>& dele
 			if (read->core.isize > 1*config.max_is+sizes[i]) continue;
 			if (start < deletions[i]->start && deletions[i]->end < end && read->core.isize > stats.max_is) {
 				tmp_disc_pairs_count[i]++;
-				_disc_pairs_to_del.push_back(i);
+				_disc_pairs_to_del_idx.push_back(i);
+				_disc_pairs_to_del_qnames.push_back(bam_get_qname(read));
 			}
 			else if (start <= midpoints[i] && midpoints[i] <= end && read->core.isize <= stats.max_is) deletions[i]->conc_pairs++;
 		}
 
-		if (_disc_pairs_to_del.size() == 1) {
-			deletions[_disc_pairs_to_del[0]]->disc_pairs++;
-		} else if (_disc_pairs_to_del.size() > 1) {
-			disc_pairs_to_del.push_back(_disc_pairs_to_del);
+		if (_disc_pairs_to_del_idx.size() == 1) {
+			deletions[_disc_pairs_to_del_idx[0]]->disc_pairs++;
+			deletions[_disc_pairs_to_del_idx[0]]->disc_pairs_qnames.push_back(_disc_pairs_to_del_qnames[0]);
+		} else if (_disc_pairs_to_del_idx.size() > 1) {
+			disc_pairs_to_del_idx.push_back(_disc_pairs_to_del_idx);
+			disc_pairs_to_del_qnames.push_back(_disc_pairs_to_del_qnames);
 		}
 	}
 
@@ -544,13 +549,19 @@ void calculate_ptn_ratio(std::string contig_name, std::vector<deletion_t*>& dele
 		}
 	}
 
-	for (auto& v : disc_pairs_to_del) {
+	for (int i = 0; i < disc_pairs_to_del_idx.size(); i++) {
+		auto& idxs = disc_pairs_to_del_idx[i];
+		auto& qnames = disc_pairs_to_del_qnames[i];
 		int max_dp = 0;
-		for (int i : v) {
-			if (tmp_disc_pairs_count[i] > max_dp) max_dp = tmp_disc_pairs_count[i];
+		for (int idx : idxs) {
+			if (tmp_disc_pairs_count[idx] > max_dp) max_dp = tmp_disc_pairs_count[idx];
 		}
-		for (int i : v) {
-			if (tmp_disc_pairs_count[i] == max_dp) deletions[i]->disc_pairs++;
+		for (int j = 0; j < idxs.size(); j++) {
+			int idx = idxs[j];
+			if (tmp_disc_pairs_count[idx] == max_dp) {
+				deletions[idx]->disc_pairs++;
+				deletions[idx]->disc_pairs_qnames.push_back(qnames[j]);
+			}
 		}
 	}
 
