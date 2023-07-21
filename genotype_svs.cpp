@@ -1033,7 +1033,9 @@ void genotype_large_ins(std::string& contig_name, insertion_t* sv, open_samFile_
 		std::string remapped_cigar;
 		int remapped_ins_len;
 		bool lowq_alt_allele;
-		remap_consensus_to_reference(junction_seq, ref_cstr, ref_realn_len, aligner, remapped_cigar, remapped_ins_len, lowq_alt_allele);
+		StripedSmithWaterman::Alignment alt_aln_prefix, alt_aln_suffix;
+		remap_consensus_to_reference(junction_seq, ref_cstr, ref_realn_len, aligner, remapped_cigar, alt_aln_prefix, alt_aln_suffix,
+				remapped_ins_len, lowq_alt_allele);
 
 		if (!lowq_alt_allele) {
 			sv->remapped_cigar = remapped_cigar;
@@ -1135,7 +1137,9 @@ void genotype_large_ins(std::string& contig_name, insertion_t* sv, open_samFile_
 				ref_cstr[i] = toupper(ref_cstr[i]);
 			}
 
-			remap_consensus_to_reference(junction_seq, ref_cstr, ref_realn_len, aligner, sv->remapped_cigar, sv->remapped_ins_len, sv->lowq_alt_allele);
+			StripedSmithWaterman::Alignment alt_aln_prefix, alt_aln_suffix;
+			remap_consensus_to_reference(junction_seq, ref_cstr, ref_realn_len, aligner, sv->remapped_cigar, alt_aln_prefix, alt_aln_suffix,
+					sv->remapped_ins_len, sv->lowq_alt_allele);
 		}
 	}
 

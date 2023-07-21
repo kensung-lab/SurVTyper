@@ -139,15 +139,18 @@ void genotype_small_ins(std::string& contig_name, insertion_t* sv, char* contig_
 	std::vector<bam1_t*> alt_better_accepted_reads;
 	std::vector<StripedSmithWaterman::Alignment> alt_better_accepted_alns;
 	StripedSmithWaterman::Alignment consensus_alt_aln, diff_consensus_alt_aln;
+
+	StripedSmithWaterman::Alignment alt_aln_prefix, alt_aln_suffix;
+	int ref_realn_start;
 	if (alt_better > 0 && alt_better <= 4*stats.max_depth && ref_better <= 2*stats.max_depth) {
 		std::vector<StripedSmithWaterman::Alignment> consensus_contigs_alns;
 		std::string consensus_log;
 		alt_consensus = generate_consensus(alt_better_seqs, alt_better_seqs_lc, alt_better_seqs_rc,
 				aligner, harsh_aligner, consensus_contigs_alns, consensus_log);
+		if (alt_consensus == "HAS_CYCLE") return; // could not assemble the alt allele
 
 		log_ss << "ALT CONSENSUS: " << alt_consensus << std::endl;
 
-		int i = 0;
 		int alt_better = 0, diff_alt_better = 0;
 		for (int i = 0; i < alt_better_reads.size(); i++) {
 			std::string seq = alt_better_seqs[i];
@@ -179,7 +182,8 @@ void genotype_small_ins(std::string& contig_name, insertion_t* sv, char* contig_
 			ref_cstr[i] = toupper(ref_cstr[i]);
 		}
 
-		remap_consensus_to_reference(alt_consensus, ref_cstr, ref_realn_len, aligner, sv->remapped_cigar, sv->remapped_ins_len, sv->lowq_alt_allele);
+		remap_consensus_to_reference(alt_consensus, ref_cstr, ref_realn_len, aligner, sv->remapped_cigar, alt_aln_prefix, alt_aln_suffix,
+				sv->remapped_ins_len, sv->lowq_alt_allele);
 	}
 
 	if (config.save_evidence) {
@@ -209,6 +213,52 @@ void genotype_small_ins(std::string& contig_name, insertion_t* sv, char* contig_
 			bam_aux_update_int(read, "AS", aln.sw_score);
 			bam_aux_update_int(read, "NM", aln.mismatches);
 			alt_better_accepted_reads_reset.push_back(new_read);
+		}
+
+		if (!alt_aln_prefix.cigar_string.empty()) {
+			bam1_t* new_read = bam_init1();
+
+			std::stringstream ss;
+			bool is_right_clipped = get_right_clip_size(alt_aln_prefix) > 0;
+			for (int i = 0; i < alt_aln_prefix.cigar.size() - is_right_clipped; i++) {
+				uint32_t c = alt_aln_prefix.cigar[i];
+				ss << cigar_int_to_len(c) << cigar_int_to_op(c);
+			}
+
+			uint32_t* cigar = NULL;
+			size_t n_cigar = 0;
+			int l_qseq = alt_aln_prefix.query_end - alt_aln_prefix.query_begin + 1 + get_left_clip_size(alt_aln_prefix);
+			sam_parse_cigar(ss.str().c_str(), NULL, &cigar, &n_cigar);
+			bam_set1(new_read, 10, "ALT_PREFIX", 66, sam_hdr_name2tid(evidence_hdr, contig_name.c_str()),
+					ref_realn_start+alt_aln_prefix.ref_begin, 60, n_cigar, cigar, sam_hdr_name2tid(evidence_hdr, contig_name.c_str()),
+					ref_realn_start+alt_aln_suffix.ref_begin, alt_aln_suffix.ref_end-alt_aln_prefix.ref_begin,
+					l_qseq, alt_consensus.substr(0, l_qseq).c_str(), NULL, 0);
+			alt_better_accepted_reads_reset.push_back(new_read);
+
+//			std::cout << "P " << sv->id << " " << l_qseq << " " << ss.str() << " " << alt_consensus << std::endl;
+		}
+
+		if (!alt_aln_suffix.cigar_string.empty()) {
+			bam1_t* new_read = bam_init1();
+
+			std::stringstream ss;
+			bool is_left_clipped = get_left_clip_size(alt_aln_suffix) > 0;
+			for (int i = is_left_clipped; i < alt_aln_suffix.cigar.size(); i++) {
+				uint32_t c = alt_aln_suffix.cigar[i];
+				ss << cigar_int_to_len(c) << cigar_int_to_op(c);
+			}
+
+			uint32_t* cigar = NULL;
+			size_t n_cigar = 0;
+			int l_qseq = alt_aln_suffix.query_end - alt_aln_suffix.query_begin + 1 + get_right_clip_size(alt_aln_suffix);
+			sam_parse_cigar(ss.str().c_str(), NULL, &cigar, &n_cigar);
+			bam_set1(new_read, 10, "ALT_SUFFIX", 66, sam_hdr_name2tid(evidence_hdr, contig_name.c_str()),
+					ref_realn_start+alt_aln_suffix.ref_begin, 60, n_cigar, cigar, sam_hdr_name2tid(evidence_hdr, contig_name.c_str()),
+					ref_realn_start+alt_aln_prefix.ref_begin, alt_aln_prefix.ref_begin-alt_aln_suffix.ref_end,
+					l_qseq, alt_consensus.substr(alt_consensus.length()-l_qseq).c_str(), NULL, 0);
+			alt_better_accepted_reads_reset.push_back(new_read);
+
+//			std::cout << "R " << sv->id << " " << l_qseq << " " << ss.str() << std::endl;
 		}
 
 		std::sort(alt_better_accepted_reads_reset.begin(), alt_better_accepted_reads_reset.end(),

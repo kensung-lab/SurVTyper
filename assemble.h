@@ -57,7 +57,8 @@ void add_alignment(std::string& reference, std::string& query, std::vector<std::
 }
 
 void remap_consensus_to_reference(std::string& junction, char* ref, int ref_len, StripedSmithWaterman::Aligner& aligner,
-		std::string& remapped_cigar, int& remapped_ins_len, bool& low_qual_alt_allele) {
+		std::string& remapped_cigar, StripedSmithWaterman::Alignment& alt_aln_prefix, StripedSmithWaterman::Alignment& alt_aln_suffix,
+		int& remapped_ins_len, bool& low_qual_alt_allele) {
 	StripedSmithWaterman::Alignment aln;
 	StripedSmithWaterman::Filter filter;
 //	std::string padded_junction = std::string(config.clip_penalty, 'N') + junction + std::string(config.clip_penalty, 'N');
@@ -68,39 +69,122 @@ void remap_consensus_to_reference(std::string& junction, char* ref, int ref_len,
 	remapped_cigar = "";
 	low_qual_alt_allele = false;
 
-	if (aln.query_begin > 0 && aln.query_end < padded_junction.length()-1) {
-		low_qual_alt_allele = true;
-		remapped_cigar = aln.cigar_string;
-	} else if (aln.query_begin == 0 && aln.query_end == padded_junction.length()-1) {
-		remapped_ins_len = padded_junction.length()-(aln.ref_end-aln.ref_begin+1);
-		remapped_cigar = aln.cigar_string;
-	} else {
-		if (aln.query_begin == 0) {
-			StripedSmithWaterman::Alignment rh_aln;
-			std::string right_half = padded_junction.substr(aln.query_end);
-			aligner.Align(right_half.c_str(), ref+aln.ref_end, ref_len-aln.ref_end, filter, &rh_aln, 0);
-			if (get_right_clip_size(rh_aln) > 0) low_qual_alt_allele = true; // bad anchor
-			else if (rh_aln.query_end-rh_aln.query_begin < config.min_clip_size+config.clip_penalty) low_qual_alt_allele = true; // anchor is too small
-			remapped_ins_len = std::max(0, get_left_clip_size(rh_aln) - rh_aln.ref_begin);
-			std::stringstream ss;
-			for (uint32_t i : aln.cigar) ss << cigar_int_to_len(i) << cigar_int_to_op(i);
-			ss << rh_aln.query_begin << "I";
-			for (uint32_t i : rh_aln.cigar) ss << cigar_int_to_len(i) << cigar_int_to_op(i);
-			remapped_cigar = ss.str();
-		} else if (aln.query_end == padded_junction.length()-1) {
-			StripedSmithWaterman::Alignment lh_aln;
-			std::string left_half = padded_junction.substr(0, aln.query_begin);
-			aligner.Align(left_half.c_str(), ref, aln.ref_begin, filter, &lh_aln, 0);
-			if (get_left_clip_size(lh_aln) > 0) low_qual_alt_allele = true; // bad anchor
-			else if (lh_aln.query_end-lh_aln.query_begin < config.min_clip_size+config.clip_penalty) low_qual_alt_allele = true; // anchor is too small
-			remapped_ins_len = std::max(0, get_right_clip_size(lh_aln) - (aln.ref_begin-1-lh_aln.ref_end));
-			std::stringstream ss;
-			for (uint32_t i : lh_aln.cigar) ss << cigar_int_to_len(i) << cigar_int_to_op(i);
-			ss << left_half.length()-lh_aln.query_end << "I";
-			for (uint32_t i : aln.cigar) ss << cigar_int_to_len(i) << cigar_int_to_op(i);
-			remapped_cigar = ss.str();
+	if (aln.query_begin == 0 && aln.query_end == padded_junction.length()-1) {
+		int largest_ins_idx = -1, largest_ins_size = 0;
+		for (int i = 0; i < aln.cigar.size(); i++) {
+			uint32_t c = aln.cigar[i];
+			char op = cigar_int_to_op(c);
+			int len = cigar_int_to_len(c);
+			if (op == 'I' && len > largest_ins_size) {
+				largest_ins_size = len;
+				largest_ins_idx = i;
+			}
 		}
+
+		if (largest_ins_idx == -1) {
+			alt_aln_prefix = aln;
+		} else {
+			StripedSmithWaterman::Alignment lh_aln, rh_aln;
+
+			lh_aln.cigar = std::vector<uint32_t>(aln.cigar.begin(), aln.cigar.begin()+largest_ins_idx);
+			if (cigar_int_to_op(lh_aln.cigar.back()) == 'D') {
+				lh_aln.cigar.pop_back();
+			}
+
+			rh_aln.cigar = std::vector<uint32_t>(aln.cigar.begin()+largest_ins_idx+1, aln.cigar.end());
+			if (cigar_int_to_op(rh_aln.cigar.front()) == 'D') rh_aln.cigar.erase(rh_aln.cigar.begin());
+
+			int lh_query_junction_len = 0, lh_ref_junction_len = 0;
+			for (uint32_t c : lh_aln.cigar) {
+				char op = cigar_int_to_op(c);
+				if (op == '=' || op == 'X' || op == 'I') lh_query_junction_len += cigar_int_to_len(c);
+				if (op == '=' || op == 'X' || op == 'D') lh_ref_junction_len += cigar_int_to_len(c);
+			}
+
+			lh_aln.query_begin = aln.query_begin;
+			lh_aln.query_end = aln.query_begin + lh_query_junction_len - 1;
+
+			lh_aln.ref_begin = aln.ref_begin;
+			lh_aln.ref_end = aln.ref_begin + lh_ref_junction_len;
+
+			int rh_query_junction_len = 0, rh_ref_junction_len = 0;
+			for (uint32_t c : rh_aln.cigar) {
+				char op = cigar_int_to_op(c);
+				if (op == '=' || op == 'X' || op == 'I') rh_query_junction_len += cigar_int_to_len(c);
+				if (op == '=' || op == 'X' || op == 'D') rh_ref_junction_len += cigar_int_to_len(c);
+			}
+
+			rh_aln.query_begin = aln.query_end - rh_query_junction_len + 1;
+			rh_aln.query_end = aln.query_end;
+
+			rh_aln.ref_begin = aln.ref_end - rh_ref_junction_len;
+			rh_aln.ref_end = aln.ref_end;
+
+			std::stringstream ss;
+			for (uint32_t c : lh_aln.cigar) {
+				ss << cigar_int_to_len(c) << cigar_int_to_op(c);
+			}
+			lh_aln.cigar_string = ss.str();
+
+			ss.str("");
+			for (uint32_t c : rh_aln.cigar) {
+				ss << cigar_int_to_len(c) << cigar_int_to_op(c);
+			}
+			rh_aln.cigar_string = ss.str();
+			alt_aln_prefix = lh_aln, alt_aln_suffix = rh_aln;
+		}
+
+		remapped_ins_len = largest_ins_size;
+		remapped_cigar = aln.cigar_string;
+	} else if (get_left_clip_size(aln) < get_right_clip_size(aln)) {
+		StripedSmithWaterman::Alignment rh_aln;
+		std::string right_half = padded_junction.substr(aln.query_end);
+		aligner.Align(right_half.c_str(), ref+aln.ref_end, ref_len-aln.ref_end, filter, &rh_aln, 0);
+		rh_aln.ref_begin += aln.ref_end;
+		rh_aln.ref_end += aln.ref_end;
+		alt_aln_prefix = aln, alt_aln_suffix = rh_aln;
+
+		if (get_right_clip_size(rh_aln) > 0) low_qual_alt_allele = true; // bad anchor
+		else if (rh_aln.query_end-rh_aln.query_begin < config.min_clip_size/*+config.clip_penalty*/) low_qual_alt_allele = true; // anchor is too small
+
+		remapped_ins_len = std::max(0, get_left_clip_size(rh_aln) - rh_aln.ref_begin);
+		std::stringstream ss;
+		for (int i = 0; i < aln.cigar.size()-1; i++) {
+			uint32_t c = aln.cigar[i];
+			ss << cigar_int_to_len(c) << cigar_int_to_op(c);
+		}
+		ss << get_left_clip_size(rh_aln) << "I";
+		if (rh_aln.ref_begin > 0) ss << rh_aln.ref_begin << "D";
+		for (int i = get_left_clip_size(aln) > 0; i < rh_aln.cigar.size(); i++) {
+			uint32_t c = rh_aln.cigar[i];
+			ss << cigar_int_to_len(c) << cigar_int_to_op(c);
+		}
+		remapped_cigar = ss.str();
+	} else {
+		StripedSmithWaterman::Alignment lh_aln;
+		std::string left_half = padded_junction.substr(0, aln.query_begin);
+		aligner.Align(left_half.c_str(), ref, aln.ref_begin, filter, &lh_aln, 0);
+		alt_aln_prefix = lh_aln, alt_aln_suffix = aln;
+
+		if (get_left_clip_size(lh_aln) > 0) low_qual_alt_allele = true; // bad anchor
+		else if (lh_aln.query_end-lh_aln.query_begin < config.min_clip_size+config.clip_penalty) low_qual_alt_allele = true; // anchor is too small
+
+		remapped_ins_len = std::max(0, get_right_clip_size(lh_aln) - (aln.ref_begin-1-lh_aln.ref_end));
+		std::stringstream ss;
+		for (int i = 0; i < lh_aln.cigar.size() - (get_right_clip_size(lh_aln) > 0); i++) {
+			uint32_t c = aln.cigar[i];
+			ss << cigar_int_to_len(c) << cigar_int_to_op(c);
+		}
+		ss << get_right_clip_size(lh_aln) << "I";
+		ss << aln.ref_begin-1-lh_aln.ref_end << "D";
+		for (int i = 1; i < aln.cigar.size(); i++) {
+			uint32_t c = aln.cigar[i];
+			ss << cigar_int_to_len(c) << cigar_int_to_op(c);
+		}
+		remapped_cigar = ss.str();
 	}
+
+	if (aln.query_begin > 0 && aln.query_end < padded_junction.length()-1) low_qual_alt_allele = true;
 }
 
 void build_aln_guided_graph(std::vector<std::pair<std::string, StripedSmithWaterman::Alignment> >& alns, std::vector<int>& out_edges,
