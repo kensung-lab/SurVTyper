@@ -1383,20 +1383,20 @@ void estimate_stats(int id, std::string contig_name, std::vector<int> rnd_positi
         while (curr_pos < rnd_positions.size() && read->core.pos > rnd_positions[curr_pos]) curr_pos++;
         if (curr_pos >= rnd_positions.size()) break;
 
-        int rlen = read->core.l_qseq;
+        int start = read->core.pos + read->core.l_qseq / 2;
+		int end = read->core.pos + read->core.isize - read->core.l_qseq / 2;
         if ((read->core.flag & BAM_FPROPER_PAIR) && !bam_is_rev(read) && read->core.isize > 0 && read->core.isize <= config.max_is) {
-            if (read->core.pos+rlen/2 <= rnd_positions[curr_pos] && rnd_positions[curr_pos] <= read->core.pos+read->core.isize-rlen/2) {
-            	temp_insert_sizes.push_back(read->core.isize);
-                sum_is += read->core.isize;
-                n_is++;
-            }
+			for (int i = curr_pos; i < rnd_positions.size() && rnd_positions[i] < end; i++) {
+				if (start <= rnd_positions[i] && rnd_positions[i] <= end) {
+					temp_insert_sizes.push_back(read->core.isize);
+					sum_is += read->core.isize;
+					n_is++;
+				}
+			}
         }
 
         if (is_samechr(read) && !is_samestr(read) && read->core.isize > 0 && read->core.isize < config.max_is + max_size_to_test()) {
-            int start = read->core.pos + read->core.l_qseq / 2;
-            int end = read->core.pos + read->core.isize - read->core.l_qseq / 2;
-            if (start >= end) continue;
-
+			if (start >= end) continue;
             for (int i = curr_pos; i < rnd_positions.size() && rnd_positions[i] < end; i++) {
                 if (start <= rnd_positions[i] && rnd_positions[i] <= end) {
                     del_pop.push_back(read->core.isize);
